@@ -182,28 +182,63 @@ export default function VetReceptionPage() {
           setBranchLabel(`${clinicName}${branchData.name}`);
         }
 
-        // Cargar veterinarios aprobados asociados a esta sucursal (multisucursal vía vet_branches)
-        const { data: vetBranchRows } = await supabase
+        const { data: vetBranchRows, error: vbError } = await supabase
           .from("vet_branches")
-          .select(
-            "vet_id, vet_profiles(id, license_number, status, profiles(id, full_name))"
-          )
+          .select("vet_id")
           .eq("branch_id", resolvedBranchId);
 
-        if (vetBranchRows) {
-          const mappedVets: BranchVet[] = vetBranchRows
-            .map((row: any) => {
-              const vp = extractFirst(row.vet_profiles);
-              if (!vp || vp.status !== "approved") return null;
-              const p = extractFirst(vp.profiles);
-              return {
-                id: row.vet_id,
-                full_name: p?.full_name || "Veterinario",
-                license_number: vp.license_number || "",
-              };
+        if (vbError) {
+          console.error("Error leyendo vet_branches:", vbError);
+        }
+
+        const candidateVetIds = new Set<string>(
+          (vetBranchRows || []).map((r: any) => r.vet_id).filter(Boolean)
+        );
+
+        const { data: directVets } = await supabase
+          .from("vet_profiles")
+          .select("id")
+          .eq("branch_id", resolvedBranchId)
+          .eq("status", "approved");
+
+        (directVets || []).forEach((v: any) => {
+          if (v.id) candidateVetIds.add(v.id);
+        });
+
+        const vetIdsArray = Array.from(candidateVetIds);
+
+        if (vetIdsArray.length > 0) {
+          const [{ data: approvedVetProfiles }, { data: vetUserProfiles }] =
+            await Promise.all([
+              supabase
+                .from("vet_profiles")
+                .select("id, license_number, status")
+                .in("id", vetIdsArray)
+                .eq("status", "approved"),
+              supabase
+                .from("profiles")
+                .select("id, full_name")
+                .in("id", vetIdsArray),
+            ]);
+
+          const nameById = new Map<string, string>(
+            (vetUserProfiles || []).map((p: any) => [
+              p.id,
+              p.full_name || "Veterinario",
+            ])
+          );
+
+          const mappedVets: BranchVet[] = (approvedVetProfiles || []).map(
+            (vp: any) => ({
+              id: vp.id,
+              full_name: nameById.get(vp.id) || "Veterinario",
+              license_number: vp.license_number || "",
             })
-            .filter((v): v is BranchVet => v !== null);
+          );
+
           setBranchVets(mappedVets);
+        } else {
+          setBranchVets([]);
         }
 
         await loadQueue(resolvedBranchId);
