@@ -2,16 +2,16 @@
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
-import { 
-  Building2, 
-  Search, 
-  MapPin, 
-  Phone, 
-  ShieldCheck, 
-  ArrowLeft, 
-  ExternalLink, 
+import {
+  Building2,
+  Search,
+  MapPin,
+  Phone,
+  ShieldCheck,
+  ArrowLeft,
+  ExternalLink,
   Clock,
-  Loader2
+  Loader2,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -24,7 +24,7 @@ interface VetService {
   phone: string;
   hours: string;
   verified: boolean;
-  mapQuery: string;
+  mapUrl: string;
 }
 
 const initialServices: VetService[] = [
@@ -37,7 +37,9 @@ const initialServices: VetService[] = [
     phone: "+54 9 376 4455667",
     hours: "Lunes a Domingo - 24 Horas",
     verified: true,
-    mapQuery: "Clinica Veterinaria del Sur Posadas Misiones"
+    mapUrl:
+      "https://www.google.com/maps/search/?api=1&query=" +
+      encodeURIComponent("Av. Uruguay 3420, Posadas, Misiones, Argentina"),
   },
   {
     id: "2",
@@ -48,7 +50,9 @@ const initialServices: VetService[] = [
     phone: "+54 9 376 4223344",
     hours: "Lun a Sáb: 08:00 - 20:00 hs",
     verified: true,
-    mapQuery: "San Lorenzo 1820 Posadas Misiones"
+    mapUrl:
+      "https://www.google.com/maps/search/?api=1&query=" +
+      encodeURIComponent("San Lorenzo 1820, Posadas, Misiones, Argentina"),
   },
   {
     id: "3",
@@ -59,7 +63,9 @@ const initialServices: VetService[] = [
     phone: "+54 9 375 5443322",
     hours: "Lun a Sáb: 08:30 - 19:30 hs",
     verified: true,
-    mapQuery: "Av Sarmiento 950 Oberá Misiones"
+    mapUrl:
+      "https://www.google.com/maps/search/?api=1&query=" +
+      encodeURIComponent("Av. Sarmiento 950, Oberá, Misiones, Argentina"),
   },
   {
     id: "4",
@@ -70,9 +76,33 @@ const initialServices: VetService[] = [
     phone: "+54 9 375 7421100",
     hours: "Lun a Sáb: 09:00 - 21:00 hs",
     verified: true,
-    mapQuery: "Av Victoria Aguirre 410 Puerto Iguazú Misiones"
-  }
+    mapUrl:
+      "https://www.google.com/maps/search/?api=1&query=" +
+      encodeURIComponent(
+        "Av. Victoria Aguirre 410, Puerto Iguazú, Misiones, Argentina"
+      ),
+  },
 ];
+
+function extractClinicName(clinics: any) {
+  if (Array.isArray(clinics)) return clinics[0]?.name || "Clínica";
+  return clinics?.name || "Clínica";
+}
+
+function buildMapUrl(branch: {
+  maps_url?: string | null;
+  address?: string | null;
+  city?: string | null;
+}) {
+  const customUrl = branch.maps_url?.trim();
+  if (customUrl && /^https?:\/\//i.test(customUrl)) {
+    return customUrl;
+  }
+  const exactQuery = `${branch.address || ""}, ${branch.city || "Posadas"}, Misiones, Argentina`;
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+    exactQuery
+  )}`;
+}
 
 export default function EcosystemDirectoryPage() {
   const [searchTerm, setSearchTerm] = useState("");
@@ -93,28 +123,29 @@ export default function EcosystemDirectoryPage() {
           name,
           city,
           address,
+          maps_url,
+          is_active,
           clinics (
             name
           )
-        `);
+        `)
+        .eq("is_active", true);
 
       if (error) throw error;
 
       if (data && data.length > 0) {
-        // Mapeamos los datos de la base de datos al formato de la interfaz VetService
         const dbServices: VetService[] = data.map((branch: any) => ({
           id: branch.id,
-          name: `${branch.clinics?.name || "Clínica"} - ${branch.name}`,
+          name: `${extractClinicName(branch.clinics)} - ${branch.name}`,
           category: "Red Oficial HuellaDigital",
-          address: branch.address,
-          city: branch.city,
-          phone: "", // Aún no capturamos teléfono en el backoffice
+          address: branch.address || "Dirección a confirmar",
+          city: branch.city || "Misiones",
+          phone: "",
           hours: "Horarios a consultar",
           verified: true,
-          mapQuery: `${branch.address}, ${branch.city}, Misiones, Argentina`
+          mapUrl: buildMapUrl(branch),
         }));
 
-        // Unimos las clínicas de la base de datos con las iniciales
         setServices([...dbServices, ...initialServices]);
       }
     } catch (error) {
@@ -124,7 +155,6 @@ export default function EcosystemDirectoryPage() {
     }
   };
 
-  // Filtrado dinámico por nombre, categoría o localidad
   const filteredServices = services.filter(
     (s) =>
       s.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -134,11 +164,9 @@ export default function EcosystemDirectoryPage() {
 
   return (
     <main className="min-h-screen bg-petlight pb-12 overflow-x-hidden">
-      
       {/* Navbar Superior */}
       <nav className="bg-petblue text-white shadow-md">
         <div className="max-w-6xl mx-auto px-4 py-4 flex flex-wrap justify-between items-center gap-3">
-          {/* Enrutamiento estricto a "/" */}
           <Link
             href="/"
             className="flex items-center min-h-[44px] gap-2 text-xs font-bold bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-xl transition-all border border-white/10"
@@ -156,13 +184,15 @@ export default function EcosystemDirectoryPage() {
 
       {/* Contenedor Principal */}
       <div className="w-[90%] sm:max-w-6xl mx-auto mt-8 space-y-6">
-        
         {/* Cabecera de Impacto y Buscador */}
         <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-petblue">Directorio de Veterinarias y Servicios</h1>
+            <h1 className="text-2xl font-bold text-petblue">
+              Directorio de Veterinarias y Servicios
+            </h1>
             <p className="text-sm text-slate-500 mt-0.5">
-              Encuentra clínicas aliadas, centros de urgencias 24hs y servicios veterinarios verificados en la provincia.
+              Encuentra clínicas aliadas, centros de urgencias 24hs y servicios
+              veterinarios verificados en la provincia.
             </p>
           </div>
 
@@ -184,14 +214,16 @@ export default function EcosystemDirectoryPage() {
         {isLoading ? (
           <div className="py-20 flex flex-col items-center justify-center">
             <Loader2 className="w-10 h-10 animate-spin text-petgreen mb-4" />
-            <p className="text-slate-500 font-medium">Cargando clínicas aliadas...</p>
+            <p className="text-slate-500 font-medium">
+              Cargando clínicas aliadas...
+            </p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             {filteredServices.length > 0 ? (
               filteredServices.map((service) => (
-                <div 
-                  key={service.id} 
+                <div
+                  key={service.id}
                   className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100 flex flex-col justify-between space-y-5 hover:shadow-md transition-all"
                 >
                   <div className="flex items-start gap-4">
@@ -200,10 +232,13 @@ export default function EcosystemDirectoryPage() {
                     </div>
                     <div className="flex-1">
                       <div className="flex flex-col sm:flex-row justify-between items-start gap-2">
-                        <h3 className="text-xl font-bold text-petblue">{service.name}</h3>
+                        <h3 className="text-xl font-bold text-petblue">
+                          {service.name}
+                        </h3>
                         {service.verified && (
                           <span className="inline-flex items-center gap-1.5 text-xs bg-emerald-50 text-emerald-700 px-3 py-1 rounded-full font-semibold border border-emerald-100 whitespace-nowrap">
-                            <ShieldCheck className="w-4 h-4 text-petgreen" /> Aliado
+                            <ShieldCheck className="w-4 h-4 text-petgreen" />{" "}
+                            Aliado
                           </span>
                         )}
                       </div>
@@ -215,20 +250,30 @@ export default function EcosystemDirectoryPage() {
 
                   <div className="space-y-3 text-sm text-slate-600 bg-slate-50/50 p-4 rounded-xl border border-slate-100">
                     <p className="flex items-center gap-2 font-medium">
-                      <MapPin className="w-4 h-4 text-slate-400 shrink-0" /> 
-                      <span>{service.address} • <strong className="text-petblue">{service.city}</strong></span>
+                      <MapPin className="w-4 h-4 text-slate-400 shrink-0" />
+                      <span>
+                        {service.address} •{" "}
+                        <strong className="text-petblue">{service.city}</strong>
+                      </span>
                     </p>
                     <p className="flex items-center gap-2 font-medium">
-                      <Clock className="w-4 h-4 text-slate-400 shrink-0" /> 
+                      <Clock className="w-4 h-4 text-slate-400 shrink-0" />
                       <span>{service.hours}</span>
                     </p>
                   </div>
 
                   {/* Botones de Acción */}
-                  <div className={`grid gap-3 pt-3 border-t border-slate-100 ${service.phone ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'}`}>
+                  <div
+                    className={`grid gap-3 pt-3 border-t border-slate-100 ${
+                      service.phone ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1"
+                    }`}
+                  >
                     {service.phone && (
                       <a
-                        href={`https://wa.me/${service.phone.replace(/[^0-9]/g, "")}`}
+                        href={`https://wa.me/${service.phone.replace(
+                          /[^0-9]/g,
+                          ""
+                        )}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="w-full min-h-[44px] flex items-center justify-center gap-2 bg-petlight hover:bg-slate-200 text-petblue font-bold text-sm py-2.5 px-4 rounded-xl transition-all"
@@ -238,7 +283,7 @@ export default function EcosystemDirectoryPage() {
                       </a>
                     )}
                     <a
-                      href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(service.mapQuery)}`}
+                      href={service.mapUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="w-full min-h-[44px] flex items-center justify-center gap-2 bg-petblue hover:bg-[#0b1f33] text-white font-bold text-sm py-2.5 px-4 rounded-xl transition-all shadow"
@@ -256,7 +301,6 @@ export default function EcosystemDirectoryPage() {
             )}
           </div>
         )}
-
       </div>
     </main>
   );

@@ -35,25 +35,27 @@ function RouteProtectorContent() {
       const isOwnerRoute = pathname.startsWith("/dashboard") || pathname.startsWith("/activate");
       // SOLUCIÓN: Solo protegemos el panel del veterinario (/vet/dashboard). 
       // Liberamos /vet/patient para que en emergencias se pueda ver sin iniciar sesión.
-      const isVetRoute = pathname.startsWith("/vet/dashboard"); 
+      const isVetRoute = pathname.startsWith("/vet/dashboard");
       const isAdminRoute = pathname.startsWith("/admin");
 
       if (!user) {
-        // Redirección para usuarios no autenticados
+        // Redirección para usuarios no autenticados (dejamos /admin libre para mostrar su login)
         if (isOwnerRoute) router.push("/auth/login");
         if (isVetRoute) router.push("/vet/login");
-        if (isAdminRoute) router.push("/");
       } else if (profile) {
         // Validación de Rol Estricto para Clínicas
         if (isVetRoute && profile.role === "owner") {
           router.push("/dashboard");
         }
-        
+
         // Validación ESTRICTA para Backoffice de Administración
         if (isAdminRoute) {
           const adminEmail = process.env.NEXT_PUBLIC_ADMIN_EMAIL || "admin@huelladigital.com";
-          const isAuthorizedAdmin = (user.email === adminEmail) || profile.is_admin === true;
-          
+          const isAuthorizedAdmin =
+            profile.role === "admin" ||
+            profile.is_admin === true ||
+            user.email === adminEmail;
+
           if (!isAuthorizedAdmin) {
             router.push("/");
           }
@@ -78,11 +80,20 @@ function RoleSwitcherContent() {
   const { user, profile, loading, setActiveRoleMode } = useAuth();
   const pathname = usePathname();
 
-  // Solo se renderiza si está cargado, hay sesión y el usuario es Veterinario
-  if (loading || !user || !profile || profile.role !== "vet") return null;
+  // Solo se renderiza si está cargado, hay sesión y el usuario tiene un rol habilitado
+  if (loading || !user || !profile) return null;
 
-  // No mostrar en pantallas de login/registro
-  if (pathname.includes("/login") || pathname.includes("/register")) return null;
+  // No mostrar en perfiles de veterinario y de sucursal ni en rutas /vet, /login o /register
+  if (
+    pathname.startsWith("/vet") ||
+    pathname.includes("/login") ||
+    pathname.includes("/register") ||
+    profile.role === "vet" ||
+    profile.role === "clinic_admin" ||
+    profile.role === "reception"
+  ) {
+    return null;
+  }
 
   const isVetRoute = pathname.startsWith("/vet");
   const targetPath = isVetRoute ? "/dashboard" : "/vet/dashboard";
@@ -146,7 +157,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       try {
         const { data: { session }, error } = await supabase.auth.getSession();
         if (error) throw error;
-        
+
         if (mounted) {
           setUser(session?.user ?? null);
           if (session?.user) {

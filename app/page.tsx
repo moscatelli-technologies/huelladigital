@@ -124,7 +124,7 @@ export default function HomePage() {
             
             <div className="flex flex-wrap justify-center md:justify-start gap-4 text-xs font-medium text-slate-300 pt-1">
               <span className="flex items-center gap-1.5"><CheckCircle2 className="w-4 h-4 text-petgreen" /> Envío a toda la provincia</span>
-              <span className="flex items-center gap-1.5"><CheckCircle2 className="w-4 h-4 text-petgreen" /> 6 meses GRATIS de suscripción</span>
+              <span className="flex items-center gap-1.5"><CheckCircle2 className="w-4 h-4 text-petgreen" /> 3 meses GRATIS de suscripción</span>
             </div>
           </div>
 

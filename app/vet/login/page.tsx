@@ -3,15 +3,28 @@
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Stethoscope, ShieldAlert, Lock, Mail, Loader2, ArrowRight, ArrowLeft, Eye, EyeOff } from "lucide-react"; // Importados Eye y EyeOff
+import {
+  Stethoscope,
+  ShieldAlert,
+  Lock,
+  Mail,
+  Loader2,
+  ArrowRight,
+  ArrowLeft,
+  Eye,
+  EyeOff,
+} from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 
 export default function VetLoginPage() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
-  const [isPending, setIsPending] = useState(false);
-  const [showPassword, setShowPassword] = useState(false); // Estado de visibilidad
+  const [pendingInfo, setPendingInfo] = useState<{
+    title: string;
+    description: string;
+  } | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
 
   const [credentials, setCredentials] = useState({
     email: "",
@@ -31,37 +44,133 @@ export default function VetLoginPage() {
     setErrorMessage("");
 
     try {
-      // 1. Autenticar con Supabase Auth
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email: credentials.email,
-        password: credentials.password,
-      });
+      const { data: authData, error: authError } =
+        await supabase.auth.signInWithPassword({
+          email: credentials.email,
+          password: credentials.password,
+        });
 
-      if (authError) {
-        throw new Error("Credenciales inválidas. Verifica tu correo y contraseña.");
+      if (authError || !authData.user) {
+        throw new Error(
+          "Credenciales inválidas. Verifica tu correo y contraseña."
+        );
       }
 
-      if (authData.user) {
-        // 2. Verificar el estado del veterinario en vet_profiles
-        const { data: vetProfile, error: profileError } = await supabase
+      const userId = authData.user.id;
+
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("role, branch_id, full_name")
+        .eq("id", userId)
+        .single();
+
+      if (profileError || !profile) {
+        await supabase.auth.signOut();
+        throw new Error("No se encontró un perfil asociado a este usuario.");
+      }
+
+      const allowedRoles = ["reception", "vet", "clinic_admin", "owner"];
+      if (!allowedRoles.includes(profile.role)) {
+        await supabase.auth.signOut();
+        throw new Error(
+          "Esta cuenta no tiene permisos de acceso al Portal Clínico."
+        );
+      }
+
+      // Veterinario: validar matrícula aprobada y sucursales asociadas
+      if (profile.role === "vet") {
+        const { data: vetProfile, error: vetError } = await supabase
           .from("vet_profiles")
-          .select("status")
-          .eq("id", authData.user.id)
+          .select("status, branch_id")
+          .eq("id", userId)
           .single();
 
-        if (profileError || !vetProfile) {
-          throw new Error("No se encontró un perfil profesional asociado a este usuario.");
+        if (vetError || !vetProfile) {
+          await supabase.auth.signOut();
+          throw new Error(
+            "No se encontró un perfil profesional veterinario asociado a este usuario."
+          );
         }
 
-        // 3. Evaluar el estado (Anti-Fraude)
         if (vetProfile.status === "pending") {
-          setIsPending(true);
-        } else if (vetProfile.status === "approved") {
-          router.push("/vet/dashboard");
-        } else {
-          throw new Error("Tu perfil profesional ha sido rechazado o inhabilitado.");
+          await supabase.auth.signOut();
+          setPendingInfo({
+            title: "Validación Profesional en Proceso",
+            description:
+              "Tu perfil profesional y tus sucursales seleccionadas están en proceso de verificación por el equipo de HuellaDigital.",
+          });
+          return;
         }
+
+        if (vetProfile.status !== "approved") {
+          await supabase.auth.signOut();
+          throw new Error(
+            "Tu perfil profesional ha sido rechazado o inhabilitado."
+          );
+        }
+
+        const { data: linkedBranches } = await supabase
+          .from("vet_branches")
+          .select("branch_id")
+          .eq("vet_id", userId);
+
+        const hasBranch =
+          (linkedBranches && linkedBranches.length > 0) ||
+          Boolean(vetProfile.branch_id || profile.branch_id);
+
+        if (!hasBranch) {
+          await supabase.auth.signOut();
+          throw new Error(
+            "Tu cuenta veterinaria aún no tiene una sucursal clínica asignada."
+          );
+        }
+
+        router.push("/vet/dashboard");
+        return;
       }
+
+      // Recepción dedicada
+      if (profile.role === "reception") {
+        if (!profile.branch_id) {
+          await supabase.auth.signOut();
+          throw new Error(
+            "Tu usuario de recepción aún no tiene una sucursal asignada."
+          );
+        }
+        router.push("/vet/reception");
+        return;
+      }
+
+      // Cuenta de Sucursal (clinic_admin u owner): verificar habilitación de sucursal
+      if (!profile.branch_id) {
+        await supabase.auth.signOut();
+        throw new Error(
+          "Esta cuenta de sucursal aún no tiene una sucursal asignada."
+        );
+      }
+
+      const { data: branchData, error: branchError } = await supabase
+        .from("clinic_branches")
+        .select("is_active")
+        .eq("id", profile.branch_id)
+        .single();
+
+      if (branchError || !branchData) {
+        await supabase.auth.signOut();
+        throw new Error("No se encontró la sucursal asociada a esta cuenta.");
+      }
+
+      if (!branchData.is_active && profile.role === "clinic_admin") {
+        await supabase.auth.signOut();
+        setPendingInfo({
+          title: "Sucursal en Proceso de Habilitación",
+          description:
+            "El alta de tu sucursal está siendo auditada por HuellaDigital. Te avisaremos cuando quede activa para operar en mostrador.",
+        });
+        return;
+      }
+
+      router.push("/vet/reception");
     } catch (error: any) {
       setErrorMessage(error.message || "Ocurrió un error al intentar acceder.");
     } finally {
@@ -69,21 +178,22 @@ export default function VetLoginPage() {
     }
   };
 
-  if (isPending) {
+  if (pendingInfo) {
     return (
       <main className="min-h-screen bg-petlight flex items-center justify-center p-4">
         <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 text-center border border-slate-100 relative">
           <ShieldAlert className="w-16 h-16 text-yellow-500 mx-auto mb-4 animate-pulse" />
-          <h2 className="text-xl font-bold text-petblue mb-2">Validación en Proceso</h2>
-          <p className="text-slate-600 text-sm">
-            Tu perfil profesional está en proceso de verificación por el equipo del Colegio Veterinario de Misiones y HuellaDigital. 
-          </p>
+          <h2 className="text-xl font-bold text-petblue mb-2">
+            {pendingInfo.title}
+          </h2>
+          <p className="text-slate-600 text-sm">{pendingInfo.description}</p>
           <p className="text-slate-500 text-xs mt-4">
-            Recibirás una notificación por correo cuando tu acceso sea aprobado.
+            Una vez habilitada tu cuenta, podrás acceder con tu correo y
+            contraseña.
           </p>
-          <button 
+          <button
             type="button"
-            onClick={() => setIsPending(false)}
+            onClick={() => setPendingInfo(null)}
             className="mt-6 text-sm text-petgreen font-bold hover:underline"
           >
             Volver al inicio de sesión
@@ -96,11 +206,10 @@ export default function VetLoginPage() {
   return (
     <main className="min-h-screen bg-petlight flex items-center justify-center p-4 overflow-x-hidden">
       <div className="w-[90%] max-w-md mx-auto bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-100">
-        
         <div className="bg-petblue text-white p-8 text-center relative">
           <div className="absolute top-4 left-4">
-            <Link 
-              href="/" 
+            <Link
+              href="/"
               className="w-8 h-8 flex items-center justify-center bg-white/10 hover:bg-white/20 backdrop-blur-md rounded-lg border border-white/10 transition-colors"
               aria-label="Volver al inicio"
             >
@@ -120,15 +229,15 @@ export default function VetLoginPage() {
           </div>
 
           <h1 className="text-xl font-bold tracking-tight text-white">
-            Portal Profesional Veterinario
+            Portal Clínico Veterinario
           </h1>
           <p className="text-xs text-slate-300 mt-1 max-w-xs mx-auto">
-            Sistema Oficial de Gestión Clínica e Historias Médicas • Misiones
+            Acceso para Veterinarios y Cuentas de Sucursal / Mostrador •
+            Misiones
           </p>
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 sm:p-8 space-y-4">
-          
           {errorMessage && (
             <div className="bg-red-50 text-red-600 p-3 rounded-lg text-xs font-medium border border-red-100 text-center">
               {errorMessage}
@@ -137,7 +246,7 @@ export default function VetLoginPage() {
 
           <div>
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">
-              Correo Institucional <span className="text-red-500">*</span>
+              Correo de Acceso <span className="text-red-500">*</span>
             </label>
             <div className="relative">
               <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
@@ -147,7 +256,7 @@ export default function VetLoginPage() {
                 type="email"
                 name="email"
                 required
-                placeholder="veterinario@colegio.com"
+                placeholder="correo@clinica.com"
                 value={credentials.email}
                 onChange={handleChange}
                 className="w-full pl-10 pr-4 py-2 min-h-[44px] text-base bg-petlight border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-petgreen text-petblue font-medium placeholder-slate-400"
@@ -172,13 +281,17 @@ export default function VetLoginPage() {
                 onChange={handleChange}
                 className="w-full pl-10 pr-12 py-2 min-h-[44px] text-base bg-petlight border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-petgreen text-petblue font-medium placeholder-slate-400"
               />
-              <button 
-                type="button" 
+              <button
+                type="button"
                 onClick={() => setShowPassword(!showPassword)}
                 className="absolute right-3 top-2.5 text-slate-400 hover:text-petgreen transition-colors p-1"
                 tabIndex={-1}
               >
-                {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                {showPassword ? (
+                  <EyeOff className="w-5 h-5" />
+                ) : (
+                  <Eye className="w-5 h-5" />
+                )}
               </button>
             </div>
           </div>
@@ -205,21 +318,22 @@ export default function VetLoginPage() {
 
           <div className="text-center pt-2">
             <p className="text-[13px] text-slate-600 font-medium">
-              ¿No tienes cuenta?{" "}
-              <Link href="/vet/register" className="text-petgreen font-bold hover:underline">
-                Solicita tu alta clínica
+              ¿No tenés cuenta?{" "}
+              <Link
+                href="/vet/register"
+                className="text-petgreen font-bold hover:underline"
+              >
+                Solicitá alta de veterinario o sucursal
               </Link>
             </p>
           </div>
-
         </form>
 
         <div className="py-4 px-6 bg-slate-50/80 border-t border-slate-100 text-center">
           <p className="text-xs text-slate-400 font-medium">
-            HuellaDigital • Módulo Veterinario Seguro
+            HuellaDigital • Módulo Clínico Multiusuario
           </p>
         </div>
-
       </div>
     </main>
   );
